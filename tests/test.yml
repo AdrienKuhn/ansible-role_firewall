@@ -1,0 +1,26 @@
+---
+- hosts: all
+  vars:
+    ufw_reset: true
+    ufw_ssh_allowed_ips:
+      - 0.0.0.0/0 # Authorize all
+    ufw_openvpn_allowed_ips:
+      - 0.0.0.0/0 # Authorize all
+    ufw_bitbucket_allowed: true
+    ufw_github_allowed: true
+    ufw_custom_rules:
+      - {
+        rule: allow,
+        port: 21,
+        src: 0.0.0.0/0,
+        proto: tcp
+      }
+    ufw_group_custom_rules:
+      - {
+        rule: allow,
+        port: 8080,
+        src: 0.0.0.0/0,
+        proto: tcp
+      }
+  roles:
+    - ansible-role_ufw

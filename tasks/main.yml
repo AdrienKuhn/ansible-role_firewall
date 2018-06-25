@@ -1,0 +1,218 @@
+---
+# tasks file for ufw
+
+##
+# Requirements
+##
+
+- name: Ensure requirements are met for SSH in
+  fail:
+    msg: "No IPs are authorized to SSH in the server. Please check your configuration!"
+  when:
+    ufw_ssh_allowed_ips is not defined or
+    ufw_ssh_allowed_ips|length == 0
+  tags: ufw
+
+- name: Ensure iptables-persistent package is absent
+  become: yes
+  apt:
+    pkg=iptables-persistent
+    state=absent
+    purge=yes
+  tags: ufw
+
+- name: Ensure Uncomplicated Firewall is installed
+  become: yes
+  apt:
+    pkg=ufw
+    state=latest
+  tags: ufw
+
+##
+# Rules
+##
+
+- name: Ensure UFW is reset
+  become: yes
+  ufw:
+    state=reset
+  when:
+    ufw_reset is defined
+    and ufw_reset|bool == true
+  tags: ufw
+
+- name: Ensure all IPv6 traffic is denied # TODO should be fixed
+  become: yes
+  ufw:
+    rule=deny
+    proto=ipv6
+  tags: ufw
+
+- name: Ensure ping is allowed
+  become: yes
+  lineinfile:
+    dest=/etc/ufw/before.rules
+    regexp="ufw-before-output -p icmp -s"
+    line="-A ufw-before-output -p icmp -s 0.0.0.0/0 -j ACCEPT"
+    insertafter="^# ok icmp codes"
+    backup=yes
+  tags: ufw
+
+- name: Ensure outgoing DNS requests are allowed
+  become: yes
+  ufw:
+    rule=allow
+    port=53
+    direction=out
+    dest=0.0.0.0/0
+    comment="DNS"
+  tags: ufw
+
+- name: Ensure NTP is allowed
+  become: yes
+  ufw:
+    rule=allow
+    port=123
+    direction=out
+    dest=0.0.0.0/0
+    comment="NTP"
+  tags: ufw
+
+- name: Ensure incoming SSH traffic is allowed from authorized IPs
+  become: yes
+  ufw:
+    rule=allow
+    port={{ ssh_port | default(22) }}
+    src={{ item }}
+    direction=in
+    proto=tcp
+    comment="SSH in"
+  with_items: "{{ ufw_ssh_allowed_ips }}"
+  tags: ufw
+
+- name: Ensure outgoing HTTP(S) traffic is allowed
+  become: yes
+  ufw:
+    rule=allow
+    port=80,443
+    direction=out
+    proto=tcp
+    comment="HTTP(S) out"
+  tags: ufw
+
+##
+# Deploy
+##
+
+- name: Retrieve Github IPs
+  become: yes
+  uri:
+    url={{ ufw_github_meta_endpoint }}
+    return_content=yes
+  register: github_meta
+  when: ufw_github_allowed|bool == true
+  check_mode: false
+  tags: ufw
+
+- name: Ensure outgoing SSH traffic is allowed to Github IPs
+  become: yes
+  ufw:
+    rule=allow
+    port=22
+    dest={{ item }}
+    direction=out
+    proto=tcp
+    comment="Github IP"
+  with_items: "{{ github_meta.json.git }}"
+  when: ufw_github_allowed|bool == true
+  tags: ufw
+
+- name: Ensure outgoing SSH traffic is allowed to Bitbucket IPs
+  become: yes
+  ufw:
+    rule=allow
+    port=22
+    dest={{ item }}
+    direction=out
+    proto=tcp
+    comment="Bitbucket IP"
+  with_items: "{{ ufw_bitbucket_ips }}"
+  when: ufw_bitbucket_allowed|bool == true
+  tags: ufw
+
+##
+# Web
+##
+
+- name: Ensure incoming HTTP(S) traffic is allowed from authorized IPs
+  become: yes
+  ufw:
+    rule=allow
+    port=80,443
+    src={{ item }}
+    direction=in
+    proto=tcp
+    comment="HTTP(S) in"
+  with_items: "{{ ufw_http_s_allowed_ips | default([]) }}"
+  when: ufw_http_s_allowed_ips is defined
+  tags: ufw
+
+##
+# OpenVPN
+##
+
+- name: Ensure OpenVPN incoming traffic is allowed
+  become: yes
+  ufw:
+    rule=allow
+    port={{ ufw_openvpn_port }}
+    src={{ item }}
+    direction=in
+    proto={{ ufw_openvpn_proto }}
+    comment="OpenVPN in"
+  with_items: "{{ ufw_openvpn_allowed_ips | default([]) }}"
+  when: ufw_openvpn_allowed_ips is defined
+  tags: ufw
+
+##
+# Custom rules
+##
+
+- name: Ensure custom rules are set
+  become: yes
+  ufw:
+    rule={{ item.rule | default(omit) }}
+    interface={{ item.interface | default(omit) }}
+    port={{ item.port | default(omit) }}
+    direction={{ item.direction | default(omit) }}
+    src={{ item.src | default(omit) }}
+    dest={{ item.dest | default(omit) }}
+    proto={{ item.proto | default(omit) }}
+    comment="Custom rule - {{ item.comment | default('No description') }}"
+  with_items: "{{ ufw_custom_rules | default([]) }} + {{ ufw_group_custom_rules | default([]) }}"
+  tags: ufw
+
+##
+# Deny all
+##
+
+- name: Ensure incoming traffic is denied
+  become: yes
+  ufw:
+    policy=deny
+    direction=incoming
+  tags: ufw
+
+- name: Ensure outgoing traffic is denied
+  become: yes
+  ufw:
+    policy=deny
+    direction=outgoing
+  tags: ufw
+
+- name: Ensure UFW is enabled
+  become: yes
+  ufw:
+    state=enabled
+    logging={{ ufw_logging }}
+  tags: ufw
